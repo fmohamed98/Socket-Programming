@@ -3,12 +3,24 @@
 #pragma comment(lib, "Ws2_32.lib")
 
 #include<stdio.h>
-#include<iostream>
+#include<stdint.h>
 #include <WinSock2.h>
-#include <winsock.h>
 #include <WS2tcpip.h>
 
 constexpr int BUFFER_SIZE = 4096;
+
+uint32_t crc32(const char* data, size_t len)
+{
+    uint32_t crc = 0xFFFFFFFF;
+
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++)
+            crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+    }
+
+    return ~crc;
+}
 
 int RecvAll(SOCKET sock, char* buffer, const int len)
 {
@@ -29,7 +41,8 @@ int RecvAll(SOCKET sock, char* buffer, const int len)
 void Error(const char* msg)
 {
     printf(msg);
-    std::cerr << WSAGetLastError();
+    int errorCode = WSAGetLastError();
+    printf(", Error code : %d", errorCode);
     exit(1);
 }
 
@@ -44,15 +57,14 @@ int main(int argc, char* argv[])
     int r = WSAStartup(MAKEWORD(2, 2), &wsa);
     if (r != 0)
     {
-        std::cerr << "WSAStartup failed: " << r << "\n";
+        printf("WSAStartup failed: %d\n",r);
         return 1;
     }
 
     SOCKET sockfd, newsockfd;
-    int portno;
     char buffer[BUFFER_SIZE]{};
 
-    sockaddr_in serverAddress, clientAddress{};
+    sockaddr_in serverAddress{}, clientAddress{};
     int clientLen;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -61,12 +73,9 @@ int main(int argc, char* argv[])
         Error("Error opening socket");
     }
 
-    portno = atoi(argv[1]);
-
-    memset(&serverAddress, 0, sizeof(serverAddress));
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_addr.s_addr = INADDR_ANY;
-    serverAddress.sin_port = htons(portno);
+    serverAddress.sin_port = htons(atoi(argv[1]));
 
     if (bind(sockfd, (sockaddr*)&serverAddress, sizeof(serverAddress)) < 0)
     {
@@ -87,14 +96,33 @@ int main(int argc, char* argv[])
 
     FILE* file = fopen("received.jpg", "wb");
 
-    int received = 0;
+    uint64_t received = 0;
+    uint32_t checkSum = 0;
     while (received < fileSize)
     {
-        int toRead = (fileSize - received) > BUFFER_SIZE ? BUFFER_SIZE : (fileSize - received);
-        int n = recv(newsockfd, buffer, toRead, 0);
+        uint64_t toRead = (fileSize - received) > BUFFER_SIZE ? BUFFER_SIZE : (fileSize - received);
+        uint64_t n = recv(newsockfd, buffer, toRead, 0);
         fwrite(buffer, 1, n, file);
 
+        checkSum = crc32(buffer, n) ^ checkSum;
         received += n;
+    }
+
+    uint32_t receivedCheckSum;
+    RecvAll(newsockfd, (char*)&receivedCheckSum, sizeof(receivedCheckSum));
+
+    if (received != fileSize)
+    {
+        printf("Transfer incomplete\n");
+    }
+
+    if (checkSum != receivedCheckSum)
+    {
+        printf("CheckSum mismatch");
+    }
+    else
+    {
+        printf("File is not corrupt");
     }
 
     fclose(file);
