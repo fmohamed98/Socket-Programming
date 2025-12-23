@@ -5,6 +5,7 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 
+#define _CRT_SECURE_NO_WARNINGS
 constexpr int BUFFER_SIZE = 4096;
 
 uint32_t crc32(const char* data, size_t len)
@@ -14,7 +15,7 @@ uint32_t crc32(const char* data, size_t len)
     for (size_t i = 0; i < len; i++) {
         crc ^= data[i];
         for (int j = 0; j < 8; j++)
-            crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+            crc = (crc >> 1) ^ (0xEDB88320 & -(int)(crc & 1));
     }
 
     return ~crc;
@@ -65,6 +66,7 @@ int main(int argc, char* argv[])
     }
 
     char buffer[BUFFER_SIZE]{};
+    char filePathName[256];
 
     sockaddr_in clientSocket;
     clientSocket.sin_family = AF_INET;
@@ -77,11 +79,25 @@ int main(int argc, char* argv[])
         Error("Connection failed");
     }
 
-    FILE* file = fopen("image.jpg", "rb");
+    printf("Enter file path with name : ");
+    fgets(filePathName, 256, stdin);
+    filePathName[strcspn(filePathName, "\n")] = '\0';
+    const char* fileName = strrchr(filePathName, '\\');
+
+    FILE* file = fopen(filePathName, "rb");
+    if (file == nullptr)
+    {
+        printf(filePathName);
+        Error("\nFile name is corrupt");
+    }
+
     fseek(file, 0, SEEK_END);
     uint64_t fileSize = _ftelli64(file);
     fseek(file, 0, SEEK_SET);
-
+    
+    int fileNameSize = strlen(fileName);
+    SendAll(sock, (char*)&fileNameSize, sizeof(fileNameSize));
+    SendAll(sock, fileName, fileNameSize);
     SendAll(sock, (char*)&fileSize, sizeof(fileSize));
 
     uint32_t checkSum = 0;
